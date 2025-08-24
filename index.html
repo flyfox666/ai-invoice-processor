@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlexiVoice-智能AI发票识别器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- 引入 PDF.js 库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <style>
+        body {
+            font-family: 'Noto Sans SC', 'Inter', sans-serif;
+        }
+        .form-input, .form-select {
+            @apply w-full bg-slate-100 border-slate-300 rounded-md py-2 px-3 text-slate-700 transition-all duration-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
+        }
+        .form-label {
+            @apply block text-sm font-medium text-slate-600 mb-1;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .hidden-file-input, .hidden-canvas {
+            display: none;
+        }
+        /* 新增：自定义模态框样式 */
+        .modal-overlay {
+            transition: opacity 0.3s ease;
+        }
+        .modal-box {
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <!-- 用于PDF渲染的隐藏Canvas -->
+    <canvas id="pdf-render-canvas" class="hidden-canvas"></canvas>
+
+    <!-- 新增：自定义模态框/弹窗 -->
+    <div id="custom-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 hidden modal-overlay">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 modal-box transform scale-95 opacity-0">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-slate-800">提示</h3>
+                <button id="modal-close-btn" class="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
+            </div>
+            <p id="modal-message" class="text-slate-600 mb-6"></p>
+            <div class="text-right">
+                <button id="modal-ok-btn" class="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors">
+                    好的
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="container mx-auto p-4 sm:p-8">
+        
+        <header class="text-center mb-10">
+            <h1 class="text-3xl sm:text-4xl font-bold text-slate-900">FlexiVoice-智能AI发票识别器</h1>
+            <p class="mt-2 text-lg text-slate-600">适配多种大模型，智能识别PDF，优化成本与效率</p>
+        </header>
+
+        <div class="max-w-5xl mx-auto space-y-8">
+            <!-- 1. AI模型配置 -->
+            <div class="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
+                <h2 class="text-xl font-semibold mb-4 text-slate-800">第一步：配置AI模型</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                    <div>
+                        <label for="api-provider-select" class="form-label">API 服务商</label>
+                        <select id="api-provider-select" class="form-select"></select>
+                        <input type="text" id="custom-api-base-url" class="form-input mt-2 hidden" placeholder="请输入自定义 API Base URL">
+                    </div>
+                     <div>
+                        <label for="api-key" class="form-label">API Key</label>
+                        <input type="password" id="api-key" class="form-input" placeholder="输入您的API密钥">
+                    </div>
+                    <div>
+                        <label for="text-model-select" class="form-label">文本模型名称</label>
+                        <select id="text-model-select" class="form-select"></select>
+                        <input type="text" id="custom-text-model" class="form-input mt-2 hidden" placeholder="请输入自定义文本模型名称">
+                    </div>
+                    <div>
+                        <label for="vision-model-select" class="form-label">视觉模型名称</label>
+                        <select id="vision-model-select" class="form-select"></select>
+                        <input type="text" id="custom-vision-model" class="form-input mt-2 hidden" placeholder="请输入自定义视觉模型名称">
+                    </div>
+                </div>
+                <div class="mt-4 p-3 bg-amber-100 text-amber-800 text-sm rounded-lg">
+                    <p><strong>安全提示：</strong> 请妥善保管您的API密钥。此页面不会存储您的密钥，仅在浏览器中用于本次请求。</p>
+                    <p class="mt-2"><strong>模型提示：</strong> 可使用所有适配openai api格式的模型调用，比如：火山大模型、智谱、阿里qwen等。</p>
+                </div>
+            </div>
+
+            <!-- 2. 上传发票 -->
+            <div class="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
+                <h2 class="text-xl font-semibold mb-4 text-slate-800">第二步：上传发票文件</h2>
+                <div class="flex flex-col items-center">
+                    <input type="file" id="file-upload" class="hidden-file-input" accept="image/png, image/jpeg, application/pdf" multiple>
+                    <label for="file-upload" class="w-full md:w-auto text-center px-6 py-3 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 hover:border-blue-500 transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 mx-auto text-slate-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                        <span class="text-blue-600 font-medium">点击上传</span>
+                        <span class="text-slate-500"> 或拖拽文件到此区域</span>
+                        <p class="text-xs text-slate-400 mt-1">支持PNG, JPG, PDF格式</p>
+                    </label>
+                </div>
+                <div id="file-list" class="mt-4 space-y-2 max-h-48 overflow-y-auto"></div>
+                <div id="file-actions" class="mt-4 flex items-center justify-center space-x-4">
+                    <label for="file-upload" class="bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg cursor-pointer hover:bg-blue-600 transition-colors">
+                        添加新附件
+                    </label>
+                    <button id="clear-files-btn" class="bg-red-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-red-600 transition-colors">
+                        清空附件
+                    </button>
+                </div>
+            </div>
+
+            <!-- 3. 执行与结果 -->
+            <div class="text-center">
+                 <div class="flex items-center justify-center mb-4">
+                    <input type="checkbox" id="force-vision-checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600">
+                    <label for="force-vision-checkbox" class="ml-2 block text-sm text-slate-700">对所有PDF强制使用视觉模型 (识别更准，成本更高)</label>
+                </div>
+                 <button id="process-btn" class="w-full md:w-1/2 bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-transform transform active:scale-95 duration-200 shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    <span id="btn-text">🚀 开始智能识别</span>
+                </button>
+            </div>
+
+            <!-- 结果区域 -->
+            <div id="results-container" class="hidden bg-white p-6 rounded-2xl shadow-md border border-slate-200">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-slate-800">识别结果</h2>
+                    <button id="export-csv-btn" class="hidden bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors">
+                        导出为CSV
+                    </button>
+                </div>
+                <div id="status-area" class="text-center mb-4"></div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-slate-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">源文件</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">处理方式</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">发票类型</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">发票号码</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">开票日期</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">销售方</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">购买方</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">金额</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">税额</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">价税合计</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-table-body" class="bg-white divide-y divide-slate-200">
+                            <!-- 结果将动态插入此处 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <footer class="text-center mt-12 text-sm text-slate-500">
+            <p>&copy; 2024 Universal AI Invoice Processor</p>
+        </footer>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- PDF.js Worker 和 cMap 配置 ---
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+        const CMAP_URL = 'https://unpkg.com/pdfjs-dist@2.16.105/cmaps/';
+
+
+        // --- DOM 元素获取 ---
+        const apiKeyInput = document.getElementById('api-key');
+        const fileUploadInput = document.getElementById('file-upload');
+        const fileListContainer = document.getElementById('file-list');
+        const clearFilesBtn = document.getElementById('clear-files-btn');
+        const processBtn = document.getElementById('process-btn');
+        const btnText = document.getElementById('btn-text');
+        const resultsContainer = document.getElementById('results-container');
+        const statusArea = document.getElementById('status-area');
+        const resultsTableBody = document.getElementById('results-table-body');
+        const exportCsvBtn = document.getElementById('export-csv-btn');
+        const forceVisionCheckbox = document.getElementById('force-vision-checkbox');
+        const providerSelect = document.getElementById('api-provider-select');
+        const customApiBaseUrlInput = document.getElementById('custom-api-base-url');
+        const textModelSelect = document.getElementById('text-model-select');
+        const customTextModelInput = document.getElementById('custom-text-model');
+        const visionModelSelect = document.getElementById('vision-model-select');
+        const customVisionModelInput = document.getElementById('custom-vision-model');
+
+        // 新增：模态框元素
+        const modal = document.getElementById('custom-modal');
+        const modalBox = modal.querySelector('.modal-box');
+        const modalMessage = document.getElementById('modal-message');
+        const modalCloseBtn = document.getElementById('modal-close-btn');
+        const modalOkBtn = document.getElementById('modal-ok-btn');
+
+        let selectedFiles = [];
+
+        // --- 模型数据配置 ---
+        const modelProviders = {
+            'https://ark.cn-beijing.volces.com/api/v3': {
+                label: '字节火山',
+                textModels: ['deepseek-v3-1-250821', 'doubao-1-5-lite-32k-250115'],
+                visionModels: ['doubao-seed-1-6-flash-250715']
+            },
+            'https://open.bigmodel.cn/api/paas/v4': {
+                label: '智谱',
+                textModels: ['glm-4.5-flash'],
+                visionModels: ['glm-4.5v']
+            }
+        };
+
+        // --- 初始化和事件监听 ---
+        function initializeUI() {
+            Object.entries(modelProviders).forEach(([url, {label}]) => {
+                const option = new Option(label, url);
+                providerSelect.add(option);
+            });
+            providerSelect.add(new Option('其他', 'other'));
+            updateModelDropdowns(providerSelect.value);
+            providerSelect.addEventListener('change', handleProviderChange);
+            textModelSelect.addEventListener('change', () => toggleCustomInput(textModelSelect, customTextModelInput));
+            visionModelSelect.addEventListener('change', () => toggleCustomInput(visionModelSelect, customVisionModelInput));
+            fileUploadInput.addEventListener('change', handleFileSelection);
+            clearFilesBtn.addEventListener('click', clearAllFiles);
+            processBtn.addEventListener('click', processInvoices);
+            exportCsvBtn.addEventListener('click', exportTableToCSV);
+            
+            // 新增：模态框关闭事件
+            modalCloseBtn.addEventListener('click', hideModal);
+            modalOkBtn.addEventListener('click', hideModal);
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    hideModal();
+                }
+            });
+        }
+        function handleProviderChange() {
+            const selectedProvider = providerSelect.value;
+            toggleCustomInput(providerSelect, customApiBaseUrlInput);
+            updateModelDropdowns(selectedProvider);
+        }
+        function updateModelDropdowns(providerUrl) {
+            const provider = modelProviders[providerUrl];
+            populateDropdown(textModelSelect, provider ? provider.textModels : []);
+            populateDropdown(visionModelSelect, provider ? provider.visionModels : []);
+            toggleCustomInput(textModelSelect, customTextModelInput);
+            toggleCustomInput(visionModelSelect, customVisionModelInput);
+        }
+        function populateDropdown(selectElement, options) {
+            selectElement.innerHTML = '';
+            options.forEach(optionValue => {
+                selectElement.add(new Option(optionValue, optionValue));
+            });
+            selectElement.add(new Option('其他', 'other'));
+        }
+        function toggleCustomInput(selectElement, inputElement) {
+            if (selectElement.value === 'other') {
+                inputElement.classList.remove('hidden');
+            } else {
+                inputElement.classList.add('hidden');
+            }
+        }
+        function getSelectedValue(selectElement, inputElement) {
+            return selectElement.value === 'other' ? inputElement.value.trim() : selectElement.value;
+        }
+        initializeUI();
+        function handleFileSelection(event) {
+            const newFiles = Array.from(event.target.files);
+            if (newFiles.length > 0) {
+                selectedFiles.push(...newFiles);
+                updateFileListUI();
+            }
+            event.target.value = null; 
+        }
+        function updateFileListUI() {
+            fileListContainer.innerHTML = '';
+            if (selectedFiles.length > 0) {
+                selectedFiles.forEach((file, index) => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'flex items-center justify-between p-2 rounded-md bg-slate-100';
+                    const fileNameSpan = document.createElement('span');
+                    fileNameSpan.className = 'text-sm text-slate-700 truncate';
+                    fileNameSpan.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'text-red-500 hover:text-red-700 font-bold text-lg px-2';
+                    deleteBtn.innerHTML = '&times;';
+                    deleteBtn.dataset.index = index;
+                    deleteBtn.onclick = deleteFile;
+                    fileItem.appendChild(fileNameSpan);
+                    fileItem.appendChild(deleteBtn);
+                    fileListContainer.appendChild(fileItem);
+                });
+            }
+        }
+        function deleteFile(event) {
+            const indexToDelete = parseInt(event.target.dataset.index, 10);
+            selectedFiles.splice(indexToDelete, 1);
+            updateFileListUI();
+        }
+        function clearAllFiles() {
+            selectedFiles = [];
+            updateFileListUI();
+            resultsContainer.classList.add('hidden');
+            exportCsvBtn.classList.add('hidden');
+        }
+
+        // --- 核心处理逻辑 ---
+        async function processInvoices() {
+            const baseUrl = getSelectedValue(providerSelect, customApiBaseUrlInput);
+            const apiKey = apiKeyInput.value.trim();
+            const textModel = getSelectedValue(textModelSelect, customTextModelInput);
+            const visionModel = getSelectedValue(visionModelSelect, customVisionModelInput);
+            const forceVision = forceVisionCheckbox.checked;
+
+            if (!baseUrl || !apiKey || !textModel || !visionModel) {
+                showModal('请填写所有AI模型配置项。');
+                return;
+            }
+            if (selectedFiles.length === 0) {
+                showModal('请至少上传一个发票文件。');
+                return;
+            }
+
+            setLoadingState(true);
+            resultsContainer.classList.remove('hidden');
+            exportCsvBtn.classList.add('hidden');
+            resultsTableBody.innerHTML = '';
+            
+            let successCount = 0;
+
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const file = selectedFiles[i];
+                statusArea.innerHTML = `<div class="flex items-center justify-center"><div class="loader"></div><span class="ml-2">正在处理第 ${i + 1} / ${selectedFiles.length} 个文件: ${file.name}</span></div>`;
+                
+                try {
+                    const result = await processSingleFile(file, baseUrl, apiKey, textModel, visionModel, forceVision);
+                    addResultToTable(result);
+                    if (!result.error) {
+                        successCount++;
+                    }
+                } catch (error) {
+                    console.error(`处理文件 ${file.name} 时发生严重错误:`, error);
+                    addResultToTable({ fileName: file.name, error: error.message, processingMethod: '错误' });
+                }
+            }
+            
+            statusArea.innerHTML = `<div class="p-3 bg-green-100 text-green-800 rounded-lg">处理完成！成功识别 ${successCount} 个文件，失败 ${selectedFiles.length - successCount} 个。</div>`;
+            if (resultsTableBody.rows.length > 0) {
+                exportCsvBtn.classList.remove('hidden');
+            }
+            setLoadingState(false);
+        }
+
+        async function processSingleFile(file, baseUrl, apiKey, textModel, visionModel, forceVision) {
+            if (file.type.startsWith('image/')) {
+                return await processImageFile(file, baseUrl, apiKey, visionModel);
+            } else if (file.type === 'application/pdf') {
+                return await processPdfFile(file, baseUrl, apiKey, textModel, visionModel, forceVision);
+            } else {
+                throw new Error('不支持的文件类型');
+            }
+        }
+
+        async function processImageFile(file, baseUrl, apiKey, visionModel) {
+            const imageDataUrl = await renderImageToDataUrl(file);
+            const prompt = getPromptForVision();
+            const payload = {
+                model: visionModel,
+                messages: [{
+                    role: "user",
+                    content: [
+                        { type: "text", text: prompt },
+                        { type: "image_url", image_url: { url: imageDataUrl } }
+                    ]
+                }]
+            };
+            const result = await callApi(payload, baseUrl, apiKey);
+            result.processingMethod = '视觉模型';
+            return result;
+        }
+
+        // --- PDF处理逻辑重构 ---
+        async function processPdfFile(file, baseUrl, apiKey, textModel, visionModel, forceVision) {
+            const pdfDoc = await loadPdfDocument(file);
+
+            let textResult = null;
+            if (!forceVision) {
+                try {
+                    const extractedText = await getTextFromPdf(pdfDoc);
+                    const chineseCharCount = countChineseChars(extractedText);
+                    
+                    if (chineseCharCount > 15) { 
+                        console.log(`文件 ${file.name} 将使用文本模型进行处理。`);
+                        const prompt = getPromptForText();
+                        const payload = {
+                            model: textModel,
+                            messages: [{ role: "user", content: `${prompt}\n\n以下是从PDF中提取的文本内容：\n\n${extractedText}` }]
+                        };
+                        textResult = await callApi(payload, baseUrl, apiKey);
+                        
+                        if (textResult.data && (textResult.data.invoiceNumber && textResult.data.invoiceNumber !== 'N/A') && (textResult.data.totalAmount && textResult.data.totalAmount !== 'N/A')) {
+                            textResult.processingMethod = '文本模型';
+                            return textResult;
+                        } else {
+                             console.warn(`文本模型处理 ${file.name} 失败 (关键信息为N/A)，将强制使用视觉模型重试...`);
+                        }
+                    }
+                } catch (textError) {
+                    console.warn(`从 ${file.name} 提取文本失败，将尝试图片识别。错误:`, textError);
+                }
+            }
+
+            const visionResult = await processPdfAsImage(pdfDoc, baseUrl, apiKey, visionModel);
+            if (textResult) {
+                visionResult.processingMethod = '文本重试(视觉)';
+            } else {
+                visionResult.processingMethod = forceVision ? '强制扫描PDF' : '扫描PDF';
+            }
+            return visionResult;
+        }
+        
+        async function processPdfAsImage(pdfDoc, baseUrl, apiKey, visionModel) {
+             console.log(`文件 ${pdfDoc.fingerprint} 将作为图片使用视觉模型进行处理。`);
+            const imageDataUrl = await renderPdfToPngDataUrl(pdfDoc);
+            const prompt = getPromptForVision();
+            const payload = {
+                model: visionModel,
+                messages: [{
+                    role: "user",
+                    content: [
+                        { type: "text", text: prompt },
+                        { type: "image_url", image_url: { url: imageDataUrl } }
+                    ]
+                }]
+            };
+            return await callApi(payload, baseUrl, apiKey);
+        }
+
+        // --- 辅助函数 (重构与优化) ---
+        async function loadPdfDocument(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument({
+                data: arrayBuffer,
+                cMapUrl: CMAP_URL,
+                cMapPacked: true,
+            });
+            return await loadingTask.promise;
+        }
+
+        async function getTextFromPdf(pdfDoc) {
+            let fullText = '';
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                const page = await pdfDoc.getPage(i);
+                const textContent = await page.getTextContent();
+                fullText += textContent.items.map(item => item.str).join(' ');
+            }
+            return fullText;
+        }
+        
+        function countChineseChars(text) {
+            if (!text) return 0;
+            const match = text.match(/[\u4e00-\u9fa5]/g);
+            return match ? match.length : 0;
+        }
+
+        async function renderPdfToPngDataUrl(pdfDoc) {
+            const page = await pdfDoc.getPage(1);
+            const viewport = page.getViewport({ scale: 3.0 }); 
+            
+            const canvas = document.getElementById('pdf-render-canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            await page.render({ canvasContext: context, viewport: viewport }).promise;
+            
+            return canvas.toDataURL('image/png');
+        }
+        
+        async function renderImageToDataUrl(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function parseAmount(amountStr) {
+            if (typeof amountStr !== 'string' || !amountStr) {
+                return 0;
+            }
+            // 移除非数字、非小数点、非负号的字符
+            const cleanedStr = amountStr.replace(/[^\d.-]/g, '');
+            const number = parseFloat(cleanedStr);
+            return isNaN(number) ? 0 : number;
+        }
+        
+        async function callApi(payload, baseUrl, apiKey) {
+            const apiUrl = `${baseUrl}/chat/completions`;
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                console.log(`API Response from ${payload.model}:`, JSON.stringify(result, null, 2));
+
+                if (!response.ok || (result && !result.choices)) {
+                     const errorMsg = result.error?.message || result.msg || JSON.stringify(result);
+                     throw new Error(`API响应无效或包含错误: ${errorMsg}`);
+                }
+                const content = result.choices?.[0]?.message?.content;
+                if (!content) {
+                    throw new Error('API响应中未找到有效内容。');
+                }
+                const firstBrace = content.indexOf('{');
+                const lastBrace = content.lastIndexOf('}');
+                if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+                    throw new Error('在模型响应中未找到有效的JSON对象。');
+                }
+                const jsonString = content.substring(firstBrace, lastBrace + 1);
+                const data = JSON.parse(jsonString);
+
+                // --- 新增：税额自动校准逻辑 ---
+                const preTaxAmount = parseAmount(data.preTaxAmount);
+                const totalAmount = parseAmount(data.totalAmount);
+                const taxAmount = parseAmount(data.taxAmount);
+
+                // 判断条件：价税合计 > 金额，并且税额为0或无效
+                if (totalAmount > preTaxAmount && taxAmount === 0) {
+                    const calculatedTax = totalAmount - preTaxAmount;
+                    // 避免浮点数精度问题
+                    if (Math.abs(calculatedTax) > 0.001) {
+                        console.log(`检测到异常税额，自动校准。文件名: ${selectedFiles[resultsTableBody.rows.length]?.name || 'N/A'}, 原税额: ${data.taxAmount}, 新税额: ${calculatedTax.toFixed(2)}`);
+                        data.taxAmount = calculatedTax.toFixed(2);
+                    }
+                }
+                // --- 逻辑结束 ---
+
+                return { data };
+            } catch (error) {
+                 console.error(`调用API (${payload.model}) 时出错:`, error);
+                 return { error: error.message };
+            }
+        }
+
+        function addResultToTable(result) {
+            const row = document.createElement('tr');
+            const fileName = result.fileName || selectedFiles[resultsTableBody.rows.length].name;
+            
+            let methodBadge = '';
+            switch(result.processingMethod) {
+                case '视觉模型':
+                    methodBadge = `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">${result.processingMethod}</span>`;
+                    break;
+                case '文本模型':
+                    methodBadge = `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">${result.processingMethod}</span>`;
+                    break;
+                case '扫描PDF':
+                     methodBadge = `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">${result.processingMethod}</span>`;
+                    break;
+                case '强制扫描PDF':
+                     methodBadge = `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800">${result.processingMethod}</span>`;
+                    break;
+                case '文本重试(视觉)':
+                     methodBadge = `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">${result.processingMethod}</span>`;
+                    break;
+                default:
+                    methodBadge = `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">处理失败</span>`;
+            }
+
+            if (result.error) {
+                row.innerHTML = `
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-slate-900">${fileName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm">${methodBadge}</td>
+                    <td colspan="8" class="px-4 py-3 text-sm text-red-600">失败: ${result.error.substring(0, 100)}...</td>
+                `;
+                row.classList.add('bg-red-50');
+            } else {
+                const d = result.data;
+                row.innerHTML = `
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-slate-900">${fileName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm">${methodBadge}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">${d.invoiceType || 'N/A'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">${d.invoiceNumber || 'N/A'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">${d.date || 'N/A'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">${d.sellerName || 'N/A'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">${d.buyerName || 'N/A'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">${d.preTaxAmount || 'N/A'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">${d.taxAmount || 'N/A'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">${d.totalAmount || 'N/A'}</td>
+                `;
+            }
+            resultsTableBody.appendChild(row);
+        }
+
+        function exportTableToCSV() {
+            const table = document.querySelector("#results-container table");
+            let csv = [];
+            const rows = table.querySelectorAll("tr");
+            for (const row of rows) {
+                const cols = row.querySelectorAll("td, th");
+                const rowData = [];
+                for (const col of cols) {
+                    let data = col.innerText.replace(/"/g, '""');
+                    if (data.includes(',')) data = `"${data}"`;
+                    rowData.push(data);
+                }
+                csv.push(rowData.join(','));
+            }
+            const csvFile = new Blob(["\uFEFF" + csv.join("\n")], { type: "text/csv;charset=utf-8;" });
+            const downloadLink = document.createElement("a");
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+            downloadLink.download = `invoice_results_${timestamp}.csv`;
+            downloadLink.href = window.URL.createObjectURL(csvFile);
+            downloadLink.style.display = "none";
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        }
+
+        function setLoadingState(isLoading) {
+            processBtn.disabled = isLoading;
+            btnText.innerHTML = isLoading ? '<div class="loader mx-auto"></div>' : '🚀 开始智能识别';
+        }
+        
+        // --- 新增：自定义模态框函数 ---
+        function showModal(message) {
+            modalMessage.textContent = message;
+            modal.classList.remove('hidden');
+            // 触发动画
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modalBox.classList.remove('scale-95', 'opacity-0');
+                modalBox.classList.add('scale-100');
+            }, 10);
+        }
+
+        function hideModal() {
+            modal.classList.add('opacity-0');
+            modalBox.classList.add('scale-95', 'opacity-0');
+            modalBox.classList.remove('scale-100');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300); // 等待动画完成
+        }
+
+        // --- Prompt模板 (已针对合计金额和特殊税率进行最终优化) ---
+        const basePrompt = `你是一位顶级的、经验丰富的财务专家，你的任务是从发票数据中精准地提取结构化信息。请严格按照以下规则，以JSON格式返回结果，不要包含任何额外的解释或markdown标记。
+
+**核心指令：** 你的首要目标是找到发票底部的“合计”行，并从该行提取最终的金额、税额和价税合计。忽略中间的商品或服务明细行。
+
+1.  **发票类型 (invoiceType)**: 
+    * 在发票标题中寻找关键词。
+    * 如果包含“增值税专用发票”，值为 "专用发票"。
+    * 如果包含“增值税普通发票”，值为 "普通发票"。
+    * 否则为 "其他"。
+
+2.  **发票号码 (invoiceNumber)**: 
+    * 寻找“发票号码”这四个汉字。
+    * 提取其右侧或下方的连续数字串。
+
+3.  **开票日期 (date)**: 
+    * 寻找“开票日期”标签。
+    * 提取其后的日期，并严格格式化为 YYYY-MM-DD。
+
+4.  **购买方名称 (buyerName)**:
+    * **主要标志**: 首先定位到关键词“购买方”或“购货单位”。
+    * **关联提取**: 在“购买方”关键词之后紧邻的文本块中，找到“名称”或“名 称”标签，并提取其对应的完整公司名称。
+    * **验证线索**: 同一个文本块中通常会包含购买方的“统一社会信用代码/纳税人识别号”，可用于验证。如果找不到“购买方”关键词，再尝试寻找布局上位于发票中上部或左侧区域的“名称”字段。
+
+5.  **销售方名称 (sellerName)**:
+    * **主要标志**: 首先定位到关键词“销售方”或“销货单位”。
+    * **关联提取**: 在“销售方”关键词之后紧邻的文本块中，找到“名称”或“名 称”标签，并提取其对应的完整公司名称。
+    * **验证线索**: 同一个文本块中通常会包含销售方的“统一社会信用代码/纳税人识别号”以及地址、电话、开户行等信息，可用于验证。如果找不到“销售方”关键词，再尝试寻找布局上位于发票中下部或右侧区域的“名称”字段。
+
+6.  **金额 (preTaxAmount)**: 
+    * **关键步骤**: 首先定位到明确标有“合计”或“合 计”的行。
+    * 在该“合计”行内，查找“金额”列对应的数值。这个数值是所有明细（包括正数和负数折扣）计算后的最终结果。
+
+7.  **税额 (taxAmount)**: 
+    * **关键步骤**: 同样在“合计”行内查找。
+    * 查找“税额”列对应的数值。
+    * **特殊情况处理**: 如果在明细行或合计行的“税率”或“税额”列中看到星号“*”、横线“-”或内容为空，这代表税额未单独列出或为零。在这种情况下，该项的值必须设为 "0.00" 或 "N/A"。不要尝试通过价税合计减去金额来计算。
+
+8.  **价税合计(小写) (totalAmount)**: 
+    * **关键步骤**: 同样在“合计”行内查找。
+    * 查找“价税合计(小写)”、“(小写)”或“总计”标签对应的最终数值。这通常是发票上最显著的总金额。
+
+请确保输出的JSON对象包含以下所有键: "invoiceType", "invoiceNumber", "date", "buyerName", "sellerName", "preTaxAmount", "taxAmount", "totalAmount"。如果某项信息确实无法找到，请将该项的值设为 "N/A"。`;
+
+        function getPromptForVision() {
+            return basePrompt.replace(/内容/g, '图片');
+        }
+
+        function getPromptForText() {
+            return basePrompt.replace(/内容/g, '文本');
+        }
+
+    });
+    </script>
+</body>
+</html>
